@@ -1229,6 +1229,92 @@ func (s *SuperAgent) getResponseBytes() (Response, []byte, []error) {
 	return resp, body, nil
 }
 
+func (s *SuperAgent) Download(path string) (Response, []error) {
+	var (
+		req  *http.Request
+		err  error
+		resp Response
+	)
+	// check whether there is an error. if yes, return all errors
+	if len(s.Errors) != 0 {
+		return nil, s.Errors
+	}
+	// check if there is forced type
+	switch s.ForceType {
+	case TypeJSON, TypeForm, TypeXML, TypeText, TypeMultipart:
+		s.TargetType = s.ForceType
+		// If forcetype is not set, check whether user set Content-Type header.
+		// If yes, also bounce to the correct supported TargetType automatically.
+	default:
+		contentType := s.Header.Get("Content-Type")
+		for k, v := range Types {
+			if contentType == v {
+				s.TargetType = k
+			}
+		}
+	}
+
+	// if slice and map get mixed, let's bounce to rawstring
+	if len(s.Data) != 0 && len(s.SliceData) != 0 {
+		s.BounceToRawString = true
+	}
+
+	// Make Request
+	req, err = s.MakeRequest()
+	if err != nil {
+		s.Errors = append(s.Errors, err)
+		return nil, s.Errors
+	}
+
+	// Set Transport
+	if !DisableTransportSwap {
+		s.Client.Transport = s.Transport
+	}
+
+	// Log details of this request
+	if s.Debug {
+		dump, err := httputil.DumpRequest(req, true)
+		s.logger.SetPrefix("[http] ")
+		if err != nil {
+			s.logger.Println("Error:", err)
+		} else {
+			s.logger.Printf("HTTP Request: %s", string(dump))
+		}
+	}
+
+	// Send request
+	resp, err = s.Client.Do(req)
+	if err != nil {
+		s.Errors = append(s.Errors, err)
+		return nil, s.Errors
+	}
+	defer resp.Body.Close()
+	// Log details of this response
+	if s.Debug {
+		dump, err := httputil.DumpResponse(resp, false)
+		if nil != err {
+			s.logger.Println("Error:", err)
+		} else {
+			s.logger.Printf("HTTP Response: %s", string(dump))
+		}
+	}
+
+	outFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		return resp, nil
+	}
+	defer outFile.Close()
+
+	_, err = io.Copy(outFile, resp.Body)
+
+	if err != nil {
+		return resp, nil
+	}
+	// Reset resp.Body so it can be use again
+	// resp.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+	return resp, nil
+}
+
 func (s *SuperAgent) MakeRequest() (*http.Request, error) {
 	var (
 		req           *http.Request
