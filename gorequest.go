@@ -1229,7 +1229,7 @@ func (s *SuperAgent) getResponseBytes() (Response, []byte, []error) {
 	return resp, body, nil
 }
 
-func (s *SuperAgent) Download(path string) (Response, []error) {
+func (s *SuperAgent) Response() (Response, []error) {
 	var (
 		req  *http.Request
 		err  error
@@ -1271,48 +1271,39 @@ func (s *SuperAgent) Download(path string) (Response, []error) {
 		s.Client.Transport = s.Transport
 	}
 
-	// Log details of this request
-	if s.Debug {
-		dump, err := httputil.DumpRequest(req, true)
-		s.logger.SetPrefix("[http] ")
-		if err != nil {
-			s.logger.Println("Error:", err)
-		} else {
-			s.logger.Printf("HTTP Request: %s", string(dump))
-		}
-	}
-
 	// Send request
 	resp, err = s.Client.Do(req)
 	if err != nil {
 		s.Errors = append(s.Errors, err)
 		return nil, s.Errors
 	}
+	return resp, nil
+}
+
+func (s *SuperAgent) WriteTo(w io.Writer) (Response, []error) {
+	resp, errs := s.Response()
+	if errs != nil {
+		return nil, errs
+	}
 	defer resp.Body.Close()
-	// Log details of this response
-	if s.Debug {
-		dump, err := httputil.DumpResponse(resp, false)
-		if nil != err {
-			s.logger.Println("Error:", err)
-		} else {
-			s.logger.Printf("HTTP Response: %s", string(dump))
-		}
+
+	_, err := io.Copy(w, resp.Body)
+
+	if err != nil {
+		return nil, []error{err}
 	}
 
+	return resp, nil
+}
+
+func (s *SuperAgent) Download(path string) (Response, []error) {
 	outFile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		return resp, nil
+		return nil, nil
 	}
 	defer outFile.Close()
 
-	_, err = io.Copy(outFile, resp.Body)
-
-	if err != nil {
-		return resp, nil
-	}
-	// Reset resp.Body so it can be use again
-	// resp.Body = ioutil.NopCloser(bytes.NewBuffer(body))
-	return resp, nil
+	return s.WriteTo(outFile)
 }
 
 func (s *SuperAgent) MakeRequest() (*http.Request, error) {
